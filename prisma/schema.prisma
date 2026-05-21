@@ -1,0 +1,466 @@
+// Prisma Schema - Restaurant POS
+// Supports SQLite (dev) → PostgreSQL (prod) via DATABASE_URL env var
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"// "sqlite" or "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth & Users ────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(CASHIER)
+  outletId     String?
+  outlet       Outlet?  @relation(fields: [outletId], references: [id])
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orders       Order[]
+  tableAssigns TableAssignment[]
+  sessions     Session[]
+  shifts       Shift[]
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  CASHIER
+  WAITER
+  KITCHEN_STAFF
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// ─── Outlets / Branches ──────────────────────────────────────────────────────
+
+model Outlet {
+  id        String   @id @default(cuid())
+  name      String
+  address   String
+  phone     String
+  gstNumber String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  users      User[]
+  tables     Table[]
+  orders     Order[]
+  inventory  InventoryItem[]
+  purchases  Purchase[]
+  shifts     Shift[]
+}
+
+// ─── Tables ──────────────────────────────────────────────────────────────────
+
+model Table {
+  id        String      @id @default(cuid())
+  number    Int
+  name      String
+  capacity  Int
+  section   String      @default("Main")
+  status    TableStatus @default(AVAILABLE)
+  outletId  String
+  outlet    Outlet      @relation(fields: [outletId], references: [id])
+  posX      Float       @default(0)
+  posY      Float       @default(0)
+  createdAt DateTime    @default(now())
+
+  orders      Order[]
+  assignments TableAssignment[]
+  bookings    Booking[]
+}
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  CLEANING
+}
+
+model TableAssignment {
+  id       String @id @default(cuid())
+  tableId  String
+  table    Table  @relation(fields: [tableId], references: [id])
+  waiterId String
+  waiter   User   @relation(fields: [waiterId], references: [id])
+  orderId  String?
+
+  @@unique([tableId, orderId])
+}
+
+model Booking {
+  id           String        @id @default(cuid())
+  tableId      String
+  table        Table         @relation(fields: [tableId], references: [id])
+  customerName String
+  phone        String
+  guestCount   Int
+  date         DateTime
+  status       BookingStatus @default(PENDING)
+  notes        String?
+  createdAt    DateTime      @default(now())
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  SEATED
+  CANCELLED
+  NO_SHOW
+}
+
+// ─── Menu ─────────────────────────────────────────────────────────────────────
+
+model Category {
+  id        String     @id @default(cuid())
+  name      String
+  slug      String     @unique
+  image     String?
+  sortOrder Int        @default(0)
+  isActive  Boolean    @default(true)
+  parentId  String?
+  parent    Category?  @relation("SubCategories", fields: [parentId], references: [id])
+  children  Category[] @relation("SubCategories")
+  menuItems MenuItem[]
+}
+
+model MenuItem {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  price       Float
+  image       String?
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+  isVeg       Boolean  @default(true)
+  isAvailable Boolean  @default(true)
+  isCombo     Boolean  @default(false)
+  gstRate     Float    @default(5.0)
+  hsnCode     String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  variants       Variant[]
+  addons         Addon[]
+  orderItems     OrderItem[]
+  comboItems     ComboItem[]  @relation("ComboParent")
+  includedInCombo ComboItem[] @relation("ComboChild")
+  recipe         Recipe[]
+}
+
+model Variant {
+  id         String   @id @default(cuid())
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+  name       String   // e.g. "Large", "Extra Spicy"
+  type       String   // "size" | "spice" | "custom"
+  priceAdj   Float    @default(0)
+  isDefault  Boolean  @default(false)
+}
+
+model Addon {
+  id         String   @id @default(cuid())
+  menuItemId String
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+  name       String
+  price      Float    @default(0)
+  isRequired Boolean  @default(false)
+  maxQty     Int      @default(1)
+}
+
+model ComboItem {
+  id         String   @id @default(cuid())
+  comboId    String
+  combo      MenuItem @relation("ComboParent", fields: [comboId], references: [id])
+  itemId     String
+  item       MenuItem @relation("ComboChild", fields: [itemId], references: [id])
+  qty        Int      @default(1)
+}
+
+// ─── Orders ───────────────────────────────────────────────────────────────────
+
+model Order {
+  id            String      @id @default(cuid())
+  orderNumber   String      @unique
+  type          OrderType   @default(DINE_IN)
+  status        OrderStatus @default(PENDING)
+  tableId       String?
+  table         Table?      @relation(fields: [tableId], references: [id])
+  outletId      String
+  outlet        Outlet      @relation(fields: [outletId], references: [id])
+  createdById   String
+  createdBy     User        @relation(fields: [createdById], references: [id])
+  customerId    String?
+  customer      Customer?   @relation(fields: [customerId], references: [id])
+  subtotal      Float       @default(0)
+  discountAmt   Float       @default(0)
+  gstAmt        Float       @default(0)
+  serviceCharge Float       @default(0)
+  total         Float       @default(0)
+  paidAmount    Float       @default(0)
+  couponCode    String?
+  notes         String?
+  tokenNumber   Int?
+  deliveryAddr  String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  completedAt   DateTime?
+
+  items       OrderItem[]
+  payments    Payment[]
+  kot         KOT[]
+  invoice     Invoice?
+}
+
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+  DELIVERY
+  QR_ORDER
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  SERVED
+  BILLED
+  PAID
+  CANCELLED
+}
+
+model OrderItem {
+  id         String     @id @default(cuid())
+  orderId    String
+  order      Order      @relation(fields: [orderId], references: [id])
+  menuItemId String
+  menuItem   MenuItem   @relation(fields: [menuItemId], references: [id])
+  qty        Int        @default(1)
+  unitPrice  Float
+  variantId  String?
+  addons     String?    // JSON array of addon ids
+  notes      String?
+  status     ItemStatus @default(PENDING)
+  kotId      String?
+  kot        KOT?       @relation(fields: [kotId], references: [id])
+  createdAt  DateTime   @default(now())
+}
+
+enum ItemStatus {
+  PENDING
+  SENT_TO_KITCHEN
+  PREPARING
+  READY
+  SERVED
+  CANCELLED
+}
+
+// ─── KOT (Kitchen Order Ticket) ──────────────────────────────────────────────
+
+model KOT {
+  id        String    @id @default(cuid())
+  kotNumber String    @unique
+  orderId   String
+  order     Order     @relation(fields: [orderId], references: [id])
+  kitchen   String    @default("Main Kitchen")
+  status    KOTStatus @default(PENDING)
+  priority  Int       @default(0)
+  notes     String?
+  createdAt DateTime  @default(now())
+  startedAt DateTime?
+  readyAt   DateTime?
+
+  items OrderItem[]
+}
+
+enum KOTStatus {
+  PENDING
+  ACKNOWLEDGED
+  PREPARING
+  READY
+  DELIVERED
+}
+
+// ─── Payments ─────────────────────────────────────────────────────────────────
+
+model Payment {
+  id            String        @id @default(cuid())
+  orderId       String
+  order         Order         @relation(fields: [orderId], references: [id])
+  method        PaymentMethod
+  amount        Float
+  reference     String?       // UPI txn id, card last 4, etc.
+  status        String        @default("SUCCESS")
+  createdAt     DateTime      @default(now())
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+  WALLET
+  CREDIT
+}
+
+model Invoice {
+  id          String   @id @default(cuid())
+  orderId     String   @unique
+  order       Order    @relation(fields: [orderId], references: [id])
+  invoiceNo   String   @unique
+  gstBreakup  String?  // JSON
+  pdfUrl      String?
+  createdAt   DateTime @default(now())
+}
+
+// ─── Customers / CRM ─────────────────────────────────────────────────────────
+
+model Customer {
+  id            String   @id @default(cuid())
+  name          String
+  phone         String   @unique
+  email         String?
+  loyaltyPoints Int      @default(0)
+  totalSpend    Float    @default(0)
+  visitCount    Int      @default(0)
+  dob           DateTime?
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  orders    Order[]
+  coupons   CouponUse[]
+}
+
+model Coupon {
+  id          String     @id @default(cuid())
+  code        String     @unique
+  type        String     // "PERCENT" | "FLAT"
+  value       Float
+  minOrder    Float      @default(0)
+  maxUses     Int?
+  usedCount   Int        @default(0)
+  validFrom   DateTime
+  validUntil  DateTime
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+
+  uses CouponUse[]
+}
+
+model CouponUse {
+  id         String   @id @default(cuid())
+  couponId   String
+  coupon     Coupon   @relation(fields: [couponId], references: [id])
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  orderId    String?
+  usedAt     DateTime @default(now())
+}
+
+// ─── Inventory ────────────────────────────────────────────────────────────────
+
+model InventoryItem {
+  id           String   @id @default(cuid())
+  name         String
+  unit         String   // kg, litre, pcs, etc.
+  currentStock Float    @default(0)
+  minStock     Float    @default(0)
+  costPerUnit  Float    @default(0)
+  supplierId   String?
+  supplier     Supplier? @relation(fields: [supplierId], references: [id])
+  outletId     String
+  outlet       Outlet   @relation(fields: [outletId], references: [id])
+  createdAt    DateTime @default(now())
+
+  recipe    Recipe[]
+  purchases PurchaseItem[]
+  wastage   WastageLog[]
+}
+
+model Recipe {
+  id              String        @id @default(cuid())
+  menuItemId      String
+  menuItem        MenuItem      @relation(fields: [menuItemId], references: [id])
+  inventoryItemId String
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  quantity        Float
+  unit            String
+}
+
+model Supplier {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String
+  email     String?
+  address   String?
+  gstNumber String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  inventory InventoryItem[]
+  purchases Purchase[]
+}
+
+model Purchase {
+  id         String   @id @default(cuid())
+  outletId   String
+  outlet     Outlet   @relation(fields: [outletId], references: [id])
+  supplierId String?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+  total      Float
+  invoice    String?
+  notes      String?
+  purchasedAt DateTime @default(now())
+
+  items PurchaseItem[]
+}
+
+model PurchaseItem {
+  id              String        @id @default(cuid())
+  purchaseId      String
+  purchase        Purchase      @relation(fields: [purchaseId], references: [id])
+  inventoryItemId String
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  qty             Float
+  unitCost        Float
+}
+
+model WastageLog {
+  id              String        @id @default(cuid())
+  inventoryItemId String
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  qty             Float
+  reason          String?
+  loggedAt        DateTime      @default(now())
+}
+
+// ─── Shifts & Staff Performance ──────────────────────────────────────────────
+
+model Shift {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id])
+  outletId   String
+  outlet     Outlet    @relation(fields: [outletId], references: [id])
+  startedAt  DateTime  @default(now())
+  endedAt    DateTime?
+  cashOpen   Float     @default(0)
+  cashClose  Float?
+  notes      String?
+}
