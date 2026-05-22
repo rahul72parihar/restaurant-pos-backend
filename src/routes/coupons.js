@@ -1,8 +1,6 @@
 const router = require("express").Router();
-const { PrismaClient } = require("@prisma/client");
+const prisma = require("../utils/prisma");
 const { authenticate, authorize } = require("../middleware/auth");
-
-const prisma = new PrismaClient();
 
 // GET /api/coupons
 router.get("/", authenticate, authorize("ADMIN", "MANAGER"), async (req, res) => {

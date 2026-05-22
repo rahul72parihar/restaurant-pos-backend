@@ -1,8 +1,6 @@
 require("dotenv").config();
-const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
-
-const prisma = new PrismaClient();
+const prisma = require("../utils/prisma");
 
 async function main() {
   console.log("🌱 Seeding database...");
