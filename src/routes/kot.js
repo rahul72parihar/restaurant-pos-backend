@@ -70,6 +70,14 @@ router.patch("/:id/status", authenticate, async (req, res) => {
       }
     }
 
+    // If this was the last KOT to be delivered, mark the parent order as SERVED.
+    if (status === "DELIVERED") {
+      const allKots = await prisma.kOT.findMany({ where: { orderId: kot.orderId } });
+      if (allKots.every((k) => ["DELIVERED"].includes(k.status))) {
+        await prisma.order.update({ where: { id: kot.orderId }, data: { status: "SERVED" } });
+      }
+    }
+
     req.app.get("io").emit("kot:updated", kot);
     res.json(kot);
   } catch (err) {

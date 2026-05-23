@@ -163,7 +163,8 @@ router.post("/", authenticate, async (req, res) => {
 });
 
 // PATCH /api/orders/:id/status
-router.patch("/:id/status", authenticate, async (req, res) => {
+router.patch("/:id/status", authenticate, authorize("ADMIN", "MANAGER"), async (req, res) => {
+
   try {
     const { status } = req.body;
     const order = await prisma.order.update({
