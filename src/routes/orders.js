@@ -163,7 +163,7 @@ router.post("/", authenticate, async (req, res) => {
 });
 
 // PATCH /api/orders/:id/status
-router.patch("/:id/status", authenticate, authorize("ADMIN", "MANAGER"), async (req, res) => {
+router.patch("/:id/status", authenticate, authorize("ADMIN", "MANAGER", "CASHIER"), async (req, res) => {
 
   try {
     const { status } = req.body;
